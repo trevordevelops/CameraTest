@@ -9,7 +9,7 @@ import SwiftUI
 import AVFoundation
 import Photos
 
-class UserEvents: NSObject, ObservableObject {
+class CameraViewModel: NSObject, ObservableObject {
 	@Published var applicationName: String = ""
 	@Published var preferredStartingCameraType: AVCaptureDevice.DeviceType = AVCaptureDevice.DeviceType.builtInWideAngleCamera
 	@Published var preferredStartingCameraPosition: AVCaptureDevice.Position = AVCaptureDevice.Position.back
@@ -254,7 +254,7 @@ class UserEvents: NSObject, ObservableObject {
 	}
 }
 
-extension UserEvents: AVCapturePhotoCaptureDelegate {
+extension CameraViewModel: AVCapturePhotoCaptureDelegate {
 	public func takePhoto() {
 		self.sessionQueue.async {
 			let photoSettings = AVCapturePhotoSettings()
@@ -317,7 +317,7 @@ extension UserEvents: AVCapturePhotoCaptureDelegate {
 	}
 }
 
-extension UserEvents: AVCaptureFileOutputRecordingDelegate {
+extension CameraViewModel: AVCaptureFileOutputRecordingDelegate {
 	public func fileOutput(_ output: AVCaptureFileOutput, didStartRecordingTo fileURL: URL, from connections: [AVCaptureConnection]) {
 		DispatchQueue.main.async {
 			//			self.ue.delegate?.didStartVideoRecording()

@@ -9,7 +9,7 @@ import SwiftUI
 
 @main
 struct CameraTestApp: App {
-	let uv = UserEvents()
+	let uv = CameraViewModel()
     var body: some Scene {
         WindowGroup {
             ContentView()

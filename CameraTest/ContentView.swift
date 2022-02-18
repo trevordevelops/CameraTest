@@ -9,7 +9,7 @@ import SwiftUI
 import AVFoundation
 
 struct ContentView: View {
-	@EnvironmentObject var ue: UserEvents
+	@EnvironmentObject var cvm: CameraViewModel
 	@State private var count: Double = 0.0
 	@State private var didFinishTakingVideo: Bool = false
 	@State var point: CGPoint = .zero
@@ -21,14 +21,14 @@ struct ContentView: View {
 			CameraView()
 				.simultaneousGesture(
 					DragGesture(minimumDistance: 4, coordinateSpace: .local)
-						.onChanged(self.ue.videoZoom(value:))
+						.onChanged(self.cvm.videoZoom(value:))
 				)
 				.simultaneousGesture(TapGesture(count: 2).onEnded {
-					self.ue.rotateCamera()
+					self.cvm.rotateCamera()
 				})
 				.gesture(
 					DragGesture(minimumDistance: 0, coordinateSpace: .local).onEnded { drag in
-						self.ue.tapToFocus(tapLocation: drag.location, viewSize: CGSize(width: UIScreen.main.bounds.width, height: UIScreen.main.bounds.height))
+						self.cvm.tapToFocus(tapLocation: drag.location, viewSize: CGSize(width: UIScreen.main.bounds.width, height: UIScreen.main.bounds.height))
 						DispatchQueue.main.async {
 							self.showPoint = true
 							self.point = drag.location
@@ -49,13 +49,13 @@ struct ContentView: View {
 				Spacer()
 				VStack {
 					Button {
-						if self.ue.flashMode == .off {
-							self.ue.flashMode = .on
+						if self.cvm.flashMode == .off {
+							self.cvm.flashMode = .on
 						} else {
-							self.ue.flashMode = .off
+							self.cvm.flashMode = .off
 						}
 					} label: {
-						Image(systemName: self.ue.flashMode == .off ? "bolt.slash.fill" : "bolt.fill")
+						Image(systemName: self.cvm.flashMode == .off ? "bolt.slash.fill" : "bolt.fill")
 							.font(.system(size: 24))
 							.foregroundColor(Color.white)
 					}
@@ -65,11 +65,11 @@ struct ContentView: View {
 				Spacer()
 				if !didFinishTakingVideo {
 					Button {
-						if self.ue.movieFileOutput.isRecording {
-							self.ue.toggleMovieRecording()
+						if self.cvm.movieFileOutput.isRecording {
+							self.cvm.toggleMovieRecording()
 							didFinishTakingVideo = true
 						} else if !self.didFinishTakingVideo {
-							self.ue.takePhoto()
+							self.cvm.takePhoto()
 						}
 					} label: {
 						Circle()
@@ -88,21 +88,21 @@ struct ContentView: View {
 									count += 1.0
 									if count == 10.0 {
 										didFinishTakingVideo = true
-										self.ue.toggleMovieRecording()
+										self.cvm.toggleMovieRecording()
 										timer.invalidate()
 									}
 								})
-								self.ue.toggleMovieRecording()
+								self.cvm.toggleMovieRecording()
 							})
 					)
 				}
 			}
 		}
 		.onAppear {
-			self.ue.checkForCameraPermissions()
+			self.cvm.checkForCameraPermissions()
 		}
 		.onDisappear {
-			self.ue.session.stopRunning()
+			self.cvm.session.stopRunning()
 			/*
 			 reset focus point
 			 */
@@ -111,21 +111,21 @@ struct ContentView: View {
 }
 
 public struct CameraView: UIViewRepresentable {
-	@EnvironmentObject var ue: UserEvents
+	@EnvironmentObject var cvm: CameraViewModel
 	public func makeUIView(context: Context) -> UIView {
 		let view = UIView(frame: UIScreen.main.bounds)
-		self.ue.cameraPreview = AVCaptureVideoPreviewLayer(session: ue.session)
-		self.ue.cameraPreview.frame = view.frame
-		self.ue.cameraPreview.videoGravity = ue.videoGravity
-		self.ue.session.startRunning()
-		view.layer.addSublayer(self.ue.cameraPreview)
+		self.cvm.cameraPreview = AVCaptureVideoPreviewLayer(session: cvm.session)
+		self.cvm.cameraPreview.frame = view.frame
+		self.cvm.cameraPreview.videoGravity = cvm.videoGravity
+		self.cvm.session.startRunning()
+		view.layer.addSublayer(self.cvm.cameraPreview)
 		return view
 	}
 	
 	public func updateUIView(_ uiView: UIViewType, context: Context) {
 		let view = UIView(frame: UIScreen.main.bounds)
-		if let focusPoint = self.ue.tappedFocusPoint {
-			guard let focusImage = self.ue.focusImage else {
+		if let focusPoint = self.cvm.tappedFocusPoint {
+			guard let focusImage = self.cvm.focusImage else {
 				return
 			}
 			let image = UIImage(named: focusImage)
