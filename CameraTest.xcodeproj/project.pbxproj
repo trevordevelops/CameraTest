@@ -11,6 +11,8 @@
 		99C8B14027BDB143003D376A /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99C8B13F27BDB143003D376A /* ContentView.swift */; };
 		99C8B14227BDB144003D376A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 99C8B14127BDB144003D376A /* Assets.xcassets */; };
 		99C8B14527BDB144003D376A /* Preview Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 99C8B14427BDB144003D376A /* Preview Assets.xcassets */; };
+		99C8B14E27BDC0C0003D376A /* SwiftUICam in Frameworks */ = {isa = PBXBuildFile; productRef = 99C8B14D27BDC0C0003D376A /* SwiftUICam */; };
+		99C8B15627BDC302003D376A /* UserEvents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99C8B15527BDC302003D376A /* UserEvents.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -19,6 +21,7 @@
 		99C8B13F27BDB143003D376A /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		99C8B14127BDB144003D376A /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		99C8B14427BDB144003D376A /* Preview Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = "Preview Assets.xcassets"; sourceTree = "<group>"; };
+		99C8B15527BDC302003D376A /* UserEvents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserEvents.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -26,6 +29,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				99C8B14E27BDC0C0003D376A /* SwiftUICam in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -53,6 +57,7 @@
 			children = (
 				99C8B13D27BDB143003D376A /* CameraTestApp.swift */,
 				99C8B13F27BDB143003D376A /* ContentView.swift */,
+				99C8B15527BDC302003D376A /* UserEvents.swift */,
 				99C8B14127BDB144003D376A /* Assets.xcassets */,
 				99C8B14327BDB144003D376A /* Preview Content */,
 			);
@@ -83,6 +88,9 @@
 			dependencies = (
 			);
 			name = CameraTest;
+			packageProductDependencies = (
+				99C8B14D27BDC0C0003D376A /* SwiftUICam */,
+			);
 			productName = CameraTest;
 			productReference = 99C8B13A27BDB143003D376A /* CameraTest.app */;
 			productType = "com.apple.product-type.application";
@@ -111,6 +119,9 @@
 				Base,
 			);
 			mainGroup = 99C8B13127BDB143003D376A;
+			packageReferences = (
+				99C8B14C27BDC0C0003D376A /* XCRemoteSwiftPackageReference "SwiftUICam" */,
+			);
 			productRefGroup = 99C8B13B27BDB143003D376A /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -138,6 +149,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				99C8B14027BDB143003D376A /* ContentView.swift in Sources */,
+				99C8B15627BDC302003D376A /* UserEvents.swift in Sources */,
 				99C8B13E27BDB143003D376A /* CameraTestApp.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -272,6 +284,9 @@
 				DEVELOPMENT_TEAM = K6YSU2X7G3;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSCameraUsageDescription = "To take photos";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "For video";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "To save photos";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -301,6 +316,9 @@
 				DEVELOPMENT_TEAM = K6YSU2X7G3;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSCameraUsageDescription = "To take photos";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "For video";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "To save photos";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -341,6 +359,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		99C8B14C27BDC0C0003D376A /* XCRemoteSwiftPackageReference "SwiftUICam" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/pierreveron/SwiftUICam";
+			requirement = {
+				branch = master;
+				kind = branch;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		99C8B14D27BDC0C0003D376A /* SwiftUICam */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 99C8B14C27BDC0C0003D376A /* XCRemoteSwiftPackageReference "SwiftUICam" */;
+			productName = SwiftUICam;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 99C8B13227BDB143003D376A /* Project object */;
 }
