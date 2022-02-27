@@ -11,53 +11,47 @@ import Photos
 
 class CameraViewModel: NSObject, ObservableObject {
 	@Published var applicationName: String = ""
-	@Published var preferredStartingCameraType: AVCaptureDevice.DeviceType = .builtInDualCamera
-	@Published var preferredStartingCameraPosition: AVCaptureDevice.Position = .back
-	@Published var videoQuality: AVCaptureSession.Preset = .hd1920x1080
+	@Published var capturedImage: UIImage? = nil
+	@Published var capturedMovieURLs: [URL] = []
+	@Published var currentDevicePosition: AVCaptureDevice.Position = .back
+	@Published var didFinishSavingContent: Bool = false
+	@Published var didFinishTakingContent: Bool = false
 	@Published var flashMode: AVCaptureDevice.FlashMode = .off
 	@Published var focusImage: String?
-	@Published var videoGravity: AVLayerVideoGravity = .resizeAspect
-	@Published var tappedFocusPoint: CGPoint? = nil
-	@Published  var session = AVCaptureSession()
-	@Published var photoOutput: AVCapturePhotoOutput = AVCapturePhotoOutput()
-	@Published var didFinishTakingContent: Bool = false
+	@Published var frontFlash: Color = Color.clear
+	@Published var isCapturingPhotos: Bool = false
+	@Published var isCapturingVideo: Bool = false
+	@Published var isMultiCaptureEnabled: Bool = false
 	@Published var movieFileOutput: AVCaptureMovieFileOutput = AVCaptureMovieFileOutput()
-	private var backgroundRecordingID: UIBackgroundTaskIdentifier?
-	private var videoDeviceInput: AVCaptureDeviceInput!
+	@Published var multiCapturedImages: [UIImage] = []
+	@Published var photoOutput: AVCapturePhotoOutput = AVCapturePhotoOutput()
+	@Published var preferredStartingCameraPosition: AVCaptureDevice.Position = .back
+	@Published var preferredStartingCameraType: AVCaptureDevice.DeviceType = .builtInDualCamera
+	@Published var session = AVCaptureSession()
+	@Published var showCapturedContentReview: Bool = false
+	@Published var tappedFocusPoint: CGPoint? = nil
+	@Published var videoGravity: AVLayerVideoGravity = .resizeAspect
+	@Published var videoPlayerURL: URL? = nil
+	@Published var videoQuality: AVCaptureSession.Preset = .hd1920x1080
+	@Published var zoomAmount: CGFloat = 1
 	private var audioDeviceInput: AVCaptureDeviceInput!
 	private var setupResult: SessionSetupResult = .success
 	private let sessionQueue = DispatchQueue(label: "session queue")
+	private var videoDeviceInput: AVCaptureDeviceInput!
 	private enum SessionSetupResult {
 		case success
 		case notAuthorized
 		case configurationFailed
 	}
-	@Published var capturedImage: UIImage = UIImage()
-	@Published var multiCapturedImages: [UIImage] = []
 	
-	@Published var frontFlash: Color = Color.clear
-	
-	@Published var capturedMovieURLs: [URL] = []
-	@Published var capturedAudioURLs: [URL] = []
-	
-	private var mutableCompTracks: [AVMutableCompositionTrack] = []
-	private var insertTime = CMTime.zero
-	
-	@Published var isMultiCaptureEnabled: Bool = false
-	@Published var isCapturingPhotos: Bool = false
-	@Published var isCapturingVideo: Bool = false
-	@Published var zoomAmount: CGFloat = 1
 	private var zoomDragValueHeight: CGFloat = 0
 	
-	@Published var currentDevicePosition: AVCaptureDevice.Position = .back
 	private var preferredRotatedCameraType: AVCaptureDevice.DeviceType = .builtInTrueDepthCamera
 	private var preferredRotatedCameraPosition: AVCaptureDevice.Position = .front
 	
 	public func checkForCameraPermissions() {
 		switch AVCaptureDevice.authorizationStatus(for: .video) {
 			case .authorized:
-				// The user has previously granted access to the camera.
-//				session.startRunning()
 				break
 			case .notDetermined:
 				sessionQueue.suspend()
@@ -107,6 +101,11 @@ class CameraViewModel: NSObject, ObservableObject {
 			self.videoDeviceInput = try AVCaptureDeviceInput(device: videoDevice)
 			if self.session.canAddInput(self.videoDeviceInput) {
 				self.session.addInput(self.videoDeviceInput)
+				try self.videoDeviceInput.device.lockForConfiguration()
+				self.videoDeviceInput.device.exposureMode = .continuousAutoExposure
+				if self.videoDeviceInput.device.isFocusPointOfInterestSupported {
+					self.videoDeviceInput.device.focusMode = .continuousAutoFocus
+				}
 			} else {
 				print("Couldn't add video device input to the self.ue.session.")
 				setupResult = .configurationFailed
@@ -191,24 +190,28 @@ class CameraViewModel: NSObject, ObservableObject {
 					print("Unknown capture position. Defaulting to back, dual-camera.")
 					self.currentDevicePosition = .back
 			}
-			if self.movieFileOutput.isRecording {
-				self.movieFileOutput.stopRecording()
-				self.session.stopRunning()
-				self.configureSession()
-				self.startMovieRecording()
+			if self.isCapturingVideo {
+				DispatchQueue.main.async {
+					self.movieFileOutput.stopRecording()
+					self.session.stopRunning()
+					self.configureSession()
+					self.startMovieRecording()
+				}
 			} else {
-				self.configureSession()
+				DispatchQueue.main.async {
+					self.configureSession()
+				}
 			}
 		}
 	}
 	
-	public func videoZoom(value: DragGesture.Value) {
+	public func videoZoom(translHeight: CGFloat) {
 		do {
 			let captureDevice = self.videoDeviceInput.device
 			try captureDevice.lockForConfiguration()
 			let maxZoomFactor: CGFloat = captureDevice.activeFormat.videoMaxZoomFactor
 			DispatchQueue.main.async {
-				let value = -value.translation.height
+				let value = -translHeight
 				var rawZoomFactor: CGFloat = 0
 				if !self.movieFileOutput.isRecording {
 					self.zoomDragValueHeight = value
@@ -230,7 +233,7 @@ class CameraViewModel: NSObject, ObservableObject {
 		}
 	}
 	
-	public func tapToFocus(tapLocation: CGPoint, viewSize: CGSize) {
+	public func tapToFocus(tapLocation: CGPoint, viewSize: CGRect) {
 		let x = tapLocation.y / viewSize.height
 		let y = 1.0 - tapLocation.x / viewSize.width
 		let focusPoint = CGPoint(x: x, y: y)
@@ -256,11 +259,17 @@ class CameraViewModel: NSObject, ObservableObject {
 extension CameraViewModel: AVCapturePhotoCaptureDelegate {
 	public func takePhoto() {
 		self.sessionQueue.async {
-			let photoSettings = AVCapturePhotoSettings()
-			if self.videoDeviceInput.device.isFlashAvailable {
-				photoSettings.flashMode = self.flashMode
+			do {
+				let captureDevice = self.videoDeviceInput.device
+				try captureDevice.lockForConfiguration()
+				let photoSettings = AVCapturePhotoSettings()
+				if self.videoDeviceInput.device.isFlashAvailable {
+					photoSettings.flashMode = self.flashMode
+				}
+				self.photoOutput.capturePhoto(with: photoSettings, delegate: self)
+			} catch {
+				print("Error taking photo: \(error)")
 			}
-			self.photoOutput.capturePhoto(with: photoSettings, delegate: self)
 		}
 	}
 	
@@ -277,34 +286,27 @@ extension CameraViewModel: AVCapturePhotoCaptureDelegate {
 
 		if let photoData = photo.fileDataRepresentation() {
 			let dataProvider = CGDataProvider(data: photoData as CFData)
-			let cgImageRef = CGImage(jpegDataProviderSource: dataProvider!,
-									 decode: nil,
-									 shouldInterpolate: true,
-									 intent: CGColorRenderingIntent.defaultIntent)
-
-			// TODO: implement imageOrientation
-			// Set proper orientation for photo
-			// If camera is currently set to front camera, flip image
-			//          let imageOrientation = getImageOrientation()
-
-			// For now, it is only right
-			//2 options to save
-			//First is to use UIImageWriteToSavedPhotosAlbum
-//			savePhoto(image)
-			//Second is adapting Apple documentation with data of the modified image
-			//savePhoto(image.jpegData(compressionQuality: 1)!)
-			DispatchQueue.main.async {
-				let image = UIImage(cgImage: cgImageRef!, scale: 1, orientation: .right)
-				if self.isMultiCaptureEnabled {
-					self.multiCapturedImages.append(image)
-					if self.multiCapturedImages.count == 10 {
-						self.didFinishTakingContent = true
+			if let cgImageRef = CGImage(jpegDataProviderSource: dataProvider!, decode: nil, shouldInterpolate: true, intent: CGColorRenderingIntent.defaultIntent) {
+				DispatchQueue.main.async {
+					var image: UIImage
+					if self.currentDevicePosition == .front {
+						image = UIImage(cgImage: cgImageRef, scale: 1.0, orientation: .leftMirrored)
+					} else {
+						image = UIImage(cgImage: cgImageRef, scale: 1.0, orientation: .right)
 					}
-				} else {
-					self.capturedImage = image
-					self.didFinishTakingContent = true
-					self.isCapturingPhotos = false
-					self.videoDeviceInput.device.videoZoomFactor = 1
+					if self.isMultiCaptureEnabled {
+						self.multiCapturedImages.append(image)
+						if self.multiCapturedImages.count == 10 {
+							self.didFinishTakingContent = true
+							self.showCapturedContentReview = true
+						}
+					} else {
+						self.capturedImage = image
+						self.didFinishTakingContent = true
+						self.showCapturedContentReview = true
+						self.isCapturingPhotos = false
+						self.videoDeviceInput.device.videoZoomFactor = 1
+					}
 				}
 			}
 		}
@@ -315,9 +317,13 @@ extension CameraViewModel: AVCapturePhotoCaptureDelegate {
 	}
 	
 	@objc private func didFinishSavingWithError(_ image: UIImage, didFinishSavingWithError error: NSError?, contextInfo: UnsafeRawPointer) {
-		//		DispatchQueue.main.async {
-		//			self.ue.delegate?.didFinishSavingWithError(image, error: error, contextInfo: contextInfo)
-		//		}
+		if let error = error {
+			print(error)
+		} else {
+			DispatchQueue.main.async {
+				self.didFinishSavingContent = true
+			}
+		}
 	}
 }
 
@@ -358,9 +364,9 @@ extension CameraViewModel: AVCaptureFileOutputRecordingDelegate {
 				try self.videoDeviceInput.device.lockForConfiguration()
 				if self.videoDeviceInput.device.isTorchModeSupported(self.videoDeviceInput.device.torchMode) && self.flashMode == .on {
 					self.videoDeviceInput.device.torchMode = .off
-					self.videoDeviceInput.device.unlockForConfiguration()
 				}
 				self.videoDeviceInput.device.videoZoomFactor = 1
+				self.videoDeviceInput.device.unlockForConfiguration()
 			} catch {
 				print(error)
 			}
@@ -382,70 +388,120 @@ extension CameraViewModel: AVCaptureFileOutputRecordingDelegate {
 		}
 	}
 	
-	public func mergeCapturedVideos(url: URL) {
-		do {
-			let mainComposition = AVMutableComposition()
-			
-			if let videoTrack = mainComposition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) {
-				let movieAsset: AVAsset = AVAsset(url: url)
-				try videoTrack.insertTimeRange(CMTimeRange(start: .zero, duration: movieAsset.duration), of: movieAsset.tracks(withMediaType: .video)[0], at: insertTime)
-				insertTime = CMTimeAdd(insertTime, movieAsset.duration)
-				self.mutableCompTracks.append(videoTrack)
+	public func mergeCapturedVideos(completion: @escaping (_ completedMovieURL: URL) -> Void) {
+		let mixComposition = AVMutableComposition()
+		let movieAssets: [AVAsset] = self.capturedMovieURLs.map({ AVAsset(url: $0) })
+		var insertTime: CMTime = CMTime.zero
+		var layerInstructionsArray: [AVVideoCompositionLayerInstruction] = []
+		for movieAsset in movieAssets {
+			do {
+				if let compositionVideoTrack: AVMutableCompositionTrack = mixComposition.addMutableTrack(withMediaType: .video, preferredTrackID: Int32(kCMPersistentTrackID_Invalid)) {
+					
+					let tracks: [AVAssetTrack] = movieAsset.tracks(withMediaType: .video)
+					let assetTrack: AVAssetTrack = tracks[0] as AVAssetTrack
+					
+					compositionVideoTrack.preferredTransform = assetTrack.preferredTransform
+					let transforms = assetTrack.preferredTransform
+					
+					try compositionVideoTrack.insertTimeRange(CMTimeRange(start: .zero, duration: movieAsset.duration), of: assetTrack, at: insertTime)
+					let videoInstruction: AVMutableVideoCompositionLayerInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: compositionVideoTrack)
+					videoInstruction.setTransform(transforms, at: .zero)
+					
+					if movieAsset != movieAssets.last {
+						videoInstruction.setOpacity(0.0, at: movieAsset.duration)
+					}
+					layerInstructionsArray.append(videoInstruction)
+					insertTime = CMTimeAdd(insertTime, movieAsset.duration)
+				}
+			} catch let error as NSError {
+				print("Error merging movies: \(error)")
 			}
+		}
+		
+		let mainInstruction: AVMutableVideoCompositionInstruction = AVMutableVideoCompositionInstruction()
+		mainInstruction.timeRange = CMTimeRange(start: .zero, duration: insertTime)
+		mainInstruction.layerInstructions = layerInstructionsArray
+		
+		let mainComposition: AVMutableVideoComposition = AVMutableVideoComposition()
+		mainComposition.instructions = [mainInstruction]
+		mainComposition.frameDuration = CMTimeMake(value: 1, timescale: 30)
+		mainComposition.renderSize = CGSize(width: 1080, height: 1920)
+		
+		let documentDirectory = NSSearchPathForDirectoriesInDomains(.documentDirectory, .userDomainMask, true)[0]
+		let dateFormatter = DateFormatter()
+		dateFormatter.dateStyle = .long
+		dateFormatter.timeStyle = .long
+		let date = dateFormatter.string(from: NSDate() as Date)
+		let savePath = (documentDirectory as NSString).appendingPathComponent("eventSocial-\(date).mp4")
+		let url = NSURL(fileURLWithPath: savePath)
 
-//			for movie in self.capturedMovieURLs {
-//				let mainComposition = AVMutableComposition()
-//				let compositionVideoTrack = mainComposition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid)
-//				let movieAsset: AVAsset = AVAsset(url: movie)
-//				try compositionVideoTrack?.insertTimeRange(CMTimeRange(start: .zero, duration: movieAsset.duration), of: movieAsset.tracks(withMediaType: .video)[0], at: insertTime)
-//				insertTime = CMTimeAdd(insertTime, movieAsset.duration)
-//				mutableCompTracks.append(compositionVideoTrack!)
-//			}
-			print("A: \(self.mutableCompTracks)")
-		} catch {
-			print("Error merging videos: \(error)")
+		if let exporter = AVAssetExportSession(asset: mixComposition, presetName: AVAssetExportPreset1920x1080) {
+			exporter.outputURL = url as URL
+			exporter.outputFileType = .mp4
+			exporter.shouldOptimizeForNetworkUse = true
+			exporter.videoComposition = mainComposition
+			exporter.exportAsynchronously {
+				if let url = exporter.outputURL {
+					completion(url)
+				} else if let error = exporter.error {
+					print("Merge exporter error: \(error)")
+				}
+			}
 		}
 	}
 	
 	/// - Tag: DidFinishRecording
 	public func fileOutput(_ output: AVCaptureFileOutput, didFinishRecordingTo outputFileURL: URL, from connections: [AVCaptureConnection], error: Error?) {
 		let outputURL: URL = outputFileURL
-		DispatchQueue.main.async {
-			self.frontFlash = Color.clear
-			self.capturedMovieURLs.append(outputURL)
-			print("\(self.capturedMovieURLs)")
-			
-//			if !self.isCapturingVideo && !self.capturedMovieURLs.isEmpty {
-				self.mergeCapturedVideos(url: outputFileURL)
-//			}
+		self.capturedMovieURLs.append(outputURL)
+		
+		if !self.isCapturingVideo {
+			if self.capturedMovieURLs.count > 1 {
+				self.mergeCapturedVideos { completedMovieURL in
+					DispatchQueue.main.async {
+						self.videoPlayerURL = completedMovieURL
+					}
+				}
+			} else {
+				DispatchQueue.main.async {
+					self.videoPlayerURL = outputURL
+				}
+			}
+			DispatchQueue.main.async {
+				self.capturedMovieURLs = []
+				self.frontFlash = Color.clear
+				self.showCapturedContentReview = true
+			}
 		}
+	}
+	
+	public func saveMovieToCameraRoll(url: URL, error: Error?, completion: @escaping (_ didSave: Bool) -> Void) {
 		var success = true
-		if error != nil {
+		if let error = error {
 			print("Movie file finishing error: \(String(describing: error))")
 			success = ((error as NSError?)?.userInfo[AVErrorRecordingSuccessfullyFinishedKey] as AnyObject).boolValue
 		}
 		if success {
 			PHPhotoLibrary.requestAuthorization { status in
 				if status == .authorized {
-					// Save the movie file to the photo library and cleanup.
 					PHPhotoLibrary.shared().performChanges({
 						let options = PHAssetResourceCreationOptions()
 						options.shouldMoveFile = true
 						let creationRequest = PHAssetCreationRequest.forAsset()
-						creationRequest.addResource(with: .video, fileURL: outputFileURL, options: options)
+						creationRequest.addResource(with: .video, fileURL: url, options: options)
 					}, completionHandler: { success, error in
 						if !success {
 							print("\(self.applicationName) couldn't save the movie to your photo library: \(String(describing: error))")
 						}
-						self.cleanupFileManagerToSaveNewFile(outputFileURL: outputURL)
-					}
-					)
+						self.cleanupFileManagerToSaveNewFile(outputFileURL: url)
+						completion(success)
+					})
 				} else {
-					self.cleanupFileManagerToSaveNewFile(outputFileURL: outputURL)
+					self.cleanupFileManagerToSaveNewFile(outputFileURL: url)
 				}
 			}
 		} else {
-			self.cleanupFileManagerToSaveNewFile(outputFileURL: outputURL)
+			self.cleanupFileManagerToSaveNewFile(outputFileURL: url)
 		}
 	}
 	
@@ -458,17 +514,5 @@ extension CameraViewModel: AVCaptureFileOutputRecordingDelegate {
 				print("Could not remove file at url: \(outputFileURL)")
 			}
 		}
-		
-		if let currentBackgroundRecordingID = backgroundRecordingID {
-			backgroundRecordingID = UIBackgroundTaskIdentifier.invalid
-			
-			if currentBackgroundRecordingID != UIBackgroundTaskIdentifier.invalid {
-				UIApplication.shared.endBackgroundTask(currentBackgroundRecordingID)
-			}
-		}
 	}
-	
-//	public func saveMovieToCameraRoll() {
-//
-//	}
 }
