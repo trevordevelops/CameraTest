@@ -74,15 +74,9 @@ struct CameraCaptureReviewView: View {
 						HStack {
 							Button {
 								DispatchQueue.main.async {
-									self.cvm.checkForCameraPermissions()
-									self.cvm.didFinishTakingContent = false
-									self.cvm.isMultiCaptureEnabled = false
-									self.cvm.multiCapturedImages = []
-									self.cvm.capturedImage = nil
-									self.cvm.videoPlayerURL = nil
-									self.cvm.didFinishSavingContent = false
+									self.cvm.goBackToCameraFromReview()
 									self.isTryingToSaveContent = false
-									self.cvm.showCapturedContentReview = false
+									self.selectedImage = nil
 								}
 							} label: {
 								Image(systemName: "xmark")
@@ -101,14 +95,49 @@ struct CameraCaptureReviewView: View {
 									Image(uiImage: image)
 										.resizable()
 										.scaledToFit()
-										.overlay(RoundedRectangle(cornerRadius: 8).stroke(self.selectedImage == image ? Color.white : Color.clear, lineWidth: 1))
-										.mask(RoundedRectangle(cornerRadius: 8))
-										.frame(width: 90, height: 90)
+										.overlay(RoundedRectangle(cornerRadius: 5).stroke(self.selectedImage == image ? Color.white : Color.clear, lineWidth: 1))
+										.mask(RoundedRectangle(cornerRadius: 5))
+										.overlay(
+											VStack {
+												HStack {
+													Spacer()
+													if let selectedImage = selectedImage, self.selectedImage == image && !self.cvm.multiCapturedImages.isEmpty {
+														Button {
+															DispatchQueue.main.async {
+																self.cvm.multiCapturedImages.remove(at: self.cvm.multiCapturedImages.firstIndex(of: selectedImage)!)
+																if self.cvm.multiCapturedImages.count == 0 {
+																	self.cvm.goBackToCameraFromReview()
+																	self.isTryingToSaveContent = false
+																	self.selectedImage = nil
+																} else {
+																	self.selectedImage = self.cvm.multiCapturedImages.first
+																}
+															}
+														} label: {
+															RoundedRectangle(cornerRadius: 5)
+																.fill(Color.white)
+																.frame(width: 20, height: 20)
+																.overlay(
+																	Image(systemName: "xmark")
+																		.font(.system(size: 10).bold())
+																		.foregroundColor(Color.black)
+																)
+														}
+													}
+												}
+												Spacer()
+											}
+										)
+										.frame(width: 110, height: 110)
 										.onTapGesture {
-											self.selectedImage = image
+											DispatchQueue.main.async {
+												self.selectedImage = image
+											}
 										}
 										.onAppear {
-											self.selectedImage = self.cvm.multiCapturedImages.first ?? UIImage()
+											DispatchQueue.main.async {
+												self.selectedImage = self.cvm.multiCapturedImages.first
+											}
 										}
 								}
 							}
@@ -128,15 +157,26 @@ struct CameraCaptureReviewView: View {
 							.frame(width: 60, height: 60)
 					} else {
 						Button {
-							self.isTryingToSaveContent = true
-							if let url = self.cvm.videoPlayerURL {
-								self.cvm.saveMovieToCameraRoll(url: url, error: nil) { didSave in
-									DispatchQueue.main.async {
-										self.cvm.didFinishSavingContent = didSave
+							DispatchQueue.main.async {
+								var multiCaptureSaveCount: Int = 0
+								self.isTryingToSaveContent = true
+								if self.cvm.isMultiCaptureEnabled {
+									for image in self.cvm.multiCapturedImages {
+										self.cvm.savePhoto(image)
+										multiCaptureSaveCount += 1
+										if multiCaptureSaveCount == self.cvm.multiCapturedImages.count {
+											self.isTryingToSaveContent = false
+										}
+									}
+								} else {
+									if let url = self.cvm.videoPlayerURL {
+										self.cvm.saveMovieToCameraRoll(url: url, error: nil) { didSave in
+											self.cvm.didFinishSavingContent = didSave
+										}
+									} else if let capturedImage = self.cvm.capturedImage {
+										self.cvm.savePhoto(capturedImage)
 									}
 								}
-							} else if let capturedImage = self.cvm.capturedImage {
-								self.cvm.savePhoto(capturedImage)
 							}
 						} label: {
 							Image(systemName: "square.and.arrow.down")
@@ -149,8 +189,10 @@ struct CameraCaptureReviewView: View {
 				}
 				.animation(.spring(), value: self.isTryingToSaveContent)
 				.onChange(of: self.cvm.didFinishSavingContent) { didSave in
-					if didSave {
-						self.isTryingToSaveContent = false
+					DispatchQueue.main.async {
+						if didSave && !self.cvm.isMultiCaptureEnabled {
+							self.isTryingToSaveContent = false
+						}
 					}
 				}
 				Spacer()
@@ -161,51 +203,57 @@ struct CameraCaptureReviewView: View {
 
 struct CameraCaptureView: View {
 	@EnvironmentObject var cvm: CameraViewModel
-	@State var timerCount: CGFloat = 0.0
-	@State var isPressing: Bool = false
 	@State var focusCirclePoint: CGPoint? = nil
 	@State var canSwitchCamera: Bool = true
 	@State private var isAnimatingFocusPoint: Bool = false
 	public let previewFrame: CGRect
 	var body: some View {
 		ZStack {
+			VStack {
+				ZStack {
+					if self.cvm.flashMode == .on && self.cvm.movieFileOutput.isRecording && self.cvm.currentDevicePosition == .front {
+						Color.white
+					} else {
+						Color.black
+					}
+				}
+				.frame(width: self.previewFrame.width, height: self.previewFrame.height)
+				.cornerRadius(15)
+				Spacer()
+			}
+			
 			VStack(spacing: 0) {
 				CameraView(focusCirclePoint: self.$focusCirclePoint, canSwitchCamera: self.$canSwitchCamera, frame: self.previewFrame)
 					.frame(width: self.previewFrame.width, height: self.previewFrame.height)
 					.shadow(color: Color.black.opacity(0.4), radius: 10, x: 0, y: 10)
-					.overlay(
-						RoundedRectangle(cornerRadius: 15)
-							.fill(self.cvm.frontFlash)
-							.opacity(0.8)
-					)
+					.opacity(self.cvm.flashMode == .on && self.cvm.movieFileOutput.isRecording && self.cvm.currentDevicePosition == .front ? 0.1 : 1.0)
 					.overlay(
 						ZStack {
 							VStack {
 								Spacer()
-								if !self.cvm.isCapturingPhotos {
-									RecordButton(timerCount: self.$timerCount, isPressing: self.$isPressing)
-										.frame(width: 100, height: 100, alignment: .center)
-										.overlay(
-											ZStack {
-												if self.timerCount == 0.0 {
-													Circle()
-														.stroke(Color.white, lineWidth: self.isPressing ? 0.5 : 3)
-														.frame(width: 80, height: 80)
-													Image(systemName: "plus")
-														.font(.system(size: 36))
-														.foregroundColor(self.cvm.isMultiCaptureEnabled ? Color.white : Color.clear)
-												} else {
-													Circle()
-														.trim(from: 0.0, to: self.timerCount/10.0)
-														.stroke(style: StrokeStyle(lineWidth: 8, lineCap: .round, lineJoin: .round))
-														.foregroundColor(Color.red)
-														.rotationEffect(Angle(degrees: 270))
-														.frame(width: 90, height: 90)
-														.animation(.linear, value: self.timerCount)
-												}
+								RecordButton(isMultiCaptureEnabled: self.$cvm.isMultiCaptureEnabled)
+									.frame(width: 100, height: 100, alignment: .center)
+									.opacity(self.cvm.isCapturingPhoto ? 0.5 : 1.0)
+									.overlay(
+										ZStack {
+											if self.cvm.recordTimerCount == 0.0 {
+												Circle()
+													.stroke(Color.white, lineWidth: self.cvm.isCapturingPhoto ? 0.5 : 3)
+													.frame(width: 80, height: 80)
+												Circle()
+													.fill(self.cvm.isCapturingPhoto ? Color.white.opacity(0.01) : Color.clear)
+													.frame(width: 100, height: 100)
+											} else if self.cvm.recordTimerCount > 0.0 {
+												Circle()
+													.trim(from: 0.0, to: self.cvm.recordTimerCount/10.0)
+													.stroke(style: StrokeStyle(lineWidth: 8, lineCap: .round, lineJoin: .round))
+													.foregroundColor(Color.red)
+													.rotationEffect(Angle(degrees: 270))
+													.frame(width: 90, height: 90)
+													.animation(.linear, value: self.cvm.recordTimerCount)
 											}
-										)
-								}
+										}
+									)
 							}
 							.padding(.bottom, 26)
 							
@@ -233,95 +281,124 @@ struct CameraCaptureView: View {
 						}
 					)
 
-				HStack(alignment: .center, spacing: 24) {
-					if self.cvm.multiCapturedImages.isEmpty {
-						Button {
-							self.cvm.isMultiCaptureEnabled.toggle()
-						} label: {
-							Image(systemName: "plus.square.on.square")
-								.font(.system(size: 24))
-								.foregroundColor(self.cvm.isMultiCaptureEnabled ? Color.green : Color.white)
-								.frame(width: 50, height: 50)
+				if !self.cvm.isCapturingVideo && !self.cvm.isCapturingPhoto && !self.cvm.didFinishTakingContent {
+					HStack(alignment: .center, spacing: 24) {
+						if self.cvm.multiCapturedImages.isEmpty {
+							Button {
+								self.cvm.isMultiCaptureEnabled.toggle()
+							} label: {
+								Image(systemName: self.cvm.isMultiCaptureEnabled ? "plus.square.fill.on.square.fill" : "plus.square.on.square")
+									.font(.system(size: 24))
+									.foregroundColor(Color.white)
+									.frame(width: 50, height: 50)
+							}
+						} else {
+							Button {
+								self.cvm.multiCapturedImages.removeLast()
+								if self.cvm.multiCapturedImages.isEmpty {
+									self.cvm.isMultiCaptureEnabled = false
+								}
+							} label: {
+								Image(systemName: "arrow.turn.up.left")
+									.font(.system(size: 24))
+									.foregroundColor(Color.white)
+									.frame(width: 50, height: 50)
+							}
+							
 						}
-					} else {
+						
 						Button {
-							self.cvm.multiCapturedImages.removeLast()
-							if self.cvm.multiCapturedImages.isEmpty {
-								self.cvm.isMultiCaptureEnabled = false
+							if self.cvm.flashMode == .off {
+								self.cvm.flashMode = .on
+							} else {
+								self.cvm.flashMode = .off
 							}
 						} label: {
-							Image(systemName: "arrow.turn.up.left")
+							Image(systemName: self.cvm.flashMode == .off ? "bolt.slash.fill" : "bolt.fill")
 								.font(.system(size: 24))
 								.foregroundColor(Color.white)
 								.frame(width: 50, height: 50)
 						}
-
-					}
-					
-					Button {
-						if self.cvm.flashMode == .off {
-							self.cvm.flashMode = .on
-						} else {
-							self.cvm.flashMode = .off
+						Button {
+							if self.canSwitchCamera {
+								self.cvm.rotateCamera()
+								self.canSwitchCamera = false
+								DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+									self.canSwitchCamera = true
+								}
+							}
+						} label: {
+							Image(systemName: "arrow.2.squarepath")
+								.font(.system(size: 24))
+								.foregroundColor(Color.white)
+								.frame(width: 50, height: 50)
 						}
-					} label: {
+					}
+					.padding(.top, 12)
+					.frame(width: self.previewFrame.width)
+					.overlay(
+						HStack(alignment: .center) {
+							if self.cvm.isMultiCaptureEnabled && !self.cvm.multiCapturedImages.isEmpty {
+								HStack(spacing: -45) {
+									ForEach(self.cvm.multiCapturedImages, id: \.self) { image in
+										Image(uiImage: image)
+											.resizable()
+											.scaledToFit()
+											.mask(RoundedRectangle(cornerRadius: 5))
+											.frame(width: 50, height: 50)
+									}
+									Spacer()
+								}
+								.frame(width: self.previewFrame.width/2.2)
+								Spacer()
+								Button {
+									DispatchQueue.main.async {
+										self.cvm.didFinishTakingContent = true
+										self.cvm.showCapturedContentReview = true
+										if self.cvm.multiCapturedImages.count == 1 {
+											self.cvm.capturedImage = self.cvm.multiCapturedImages[0]
+											self.cvm.isMultiCaptureEnabled = false
+											self.cvm.multiCapturedImages = []
+										}
+									}
+								} label: {
+									Text("Done")
+										.bold()
+										.foregroundColor(Color.black)
+										.frame(width: 60, height: 30)
+										.background(Color.white)
+										.cornerRadius(15)
+								}
+							}
+						}
+							.padding(.top, 12)
+					)
+					.animation(.spring(), value: self.cvm.multiCapturedImages)
+				} else {
+					HStack(alignment: .center, spacing: 24) {
+						Image(systemName: "plus.square.on.square")
+							.font(.system(size: 24))
+							.foregroundColor(self.cvm.isMultiCaptureEnabled ? Color.green : Color.white)
+							.frame(width: 50, height: 50)
+						
 						Image(systemName: self.cvm.flashMode == .off ? "bolt.slash.fill" : "bolt.fill")
 							.font(.system(size: 24))
 							.foregroundColor(Color.white)
 							.frame(width: 50, height: 50)
-					}
-					Button {
-						if self.canSwitchCamera {
-							self.cvm.rotateCamera()
-							self.canSwitchCamera = false
-							DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-								self.canSwitchCamera = true
-							}
-						}
-					} label: {
 						Image(systemName: "arrow.2.squarepath")
 							.font(.system(size: 24))
 							.foregroundColor(Color.white)
 							.frame(width: 50, height: 50)
 					}
+					.padding(.top, 12)
+					.frame(width: self.previewFrame.width)
+					.opacity(0.1)
 				}
-				.padding(.top, 12)
-				.frame(width: self.previewFrame.width)
-				.overlay(
-					HStack(alignment: .center) {
-						if self.cvm.isMultiCaptureEnabled && !self.cvm.multiCapturedImages.isEmpty {
-							HStack(spacing: -45) {
-								ForEach(self.cvm.multiCapturedImages, id: \.self) { image in
-									Image(uiImage: image)
-										.resizable()
-										.scaledToFit()
-										.mask(RoundedRectangle(cornerRadius: 5))
-										.frame(width: 50, height: 50)
-								}
-								Spacer()
-							}
-							.frame(width: self.previewFrame.width/2.2)
-							Spacer()
-							Button {
-								self.cvm.didFinishTakingContent = true
-							} label: {
-								Text("Done")
-									.bold()
-									.foregroundColor(Color.black)
-									.frame(width: 60, height: 30)
-									.background(Color.white)
-									.cornerRadius(15)
-							}
-						}
-					}
-						.padding(.top, 12)
-				)
-				.animation(.spring(), value: self.cvm.multiCapturedImages)
 				Spacer()
 			}
 		}
 		.onDisappear {
-			self.timerCount = 0.0
+			self.cvm.recordTimerCount = 0.0
 			self.cvm.session.stopRunning()
 		}
 	}
@@ -333,63 +410,45 @@ public struct CameraView: UIViewRepresentable {
 	@Binding var canSwitchCamera: Bool
 	public var frame: CGRect
 	private let view: UIView = UIView()
-	
+	private let flashLayer: CALayer = CALayer()
+
 	public func makeCoordinator() -> Coordinator {
 		return Coordinator(parent: self)
 	}
 	
 	public func makeUIView(context: UIViewRepresentableContext<CameraView>) -> UIView {
-		let view = self.view
-		view.frame = self.frame
+		self.view.frame = self.frame
 		let preview = AVCaptureVideoPreviewLayer(session: self.cvm.session)
-		
 		
 		let dragPanGesture = UIPanGestureRecognizer(target: context.coordinator, action: #selector(context.coordinator.zoomDragGesture(_:)))
 		dragPanGesture.delegate = context.coordinator
-		view.addGestureRecognizer(dragPanGesture)
+		self.view.addGestureRecognizer(dragPanGesture)
 		
 		let singleTapGesture = UITapGestureRecognizer(target: context.coordinator, action: #selector(context.coordinator.tapToFocusGesture(_:)))
 		singleTapGesture.delegate = context.coordinator
 		singleTapGesture.numberOfTapsRequired = 1
-		view.addGestureRecognizer(singleTapGesture)
+		self.view.addGestureRecognizer(singleTapGesture)
 		
 		let doubleTapGesture = UITapGestureRecognizer(target: context.coordinator, action: #selector(context.coordinator.doubleTapGesture(_:)))
 		doubleTapGesture.delegate = context.coordinator
 		doubleTapGesture.numberOfTapsRequired = 2
-		view.addGestureRecognizer(doubleTapGesture)
+		self.view.addGestureRecognizer(doubleTapGesture)
 		
 		singleTapGesture.require(toFail: doubleTapGesture)
 		
-		preview.frame = view.frame
+		preview.frame = self.frame
 		preview.videoGravity = self.cvm.videoGravity
 		preview.cornerRadius = 15
-		view.backgroundColor = .black
-		view.layer.addSublayer(preview)
-		return view
+		self.view.backgroundColor = .clear
+		self.view.layer.addSublayer(preview)
+		return self.view
 	}
 	
 	public func updateUIView(_ uiView: UIViewType, context: UIViewRepresentableContext<CameraView>) {
-		let view = UIView(frame: self.frame)
+		uiView.frame = self.frame
+
 		if let focusPoint = self.cvm.tappedFocusPoint {
-			guard let focusImage = self.cvm.focusImage else {
-				return
-			}
-			let image = UIImage(named: focusImage)
-			let focusView = UIImageView(image: image)
-			focusView.center = focusPoint
-			focusView.alpha = 0.0
-			view.addSubview(focusView)
-			UIView.animate(withDuration: 0.25, delay: 0.0, options: .curveEaseInOut, animations: {
-				focusView.alpha = 1.0
-				focusView.transform = CGAffineTransform(scaleX: 1.25, y: 1.25)
-			}) { (success) in
-				UIView.animate(withDuration: 0.15, delay: 0.5, options: .curveEaseInOut, animations: {
-					focusView.alpha = 0.0
-					focusView.transform = CGAffineTransform(translationX: 0.6, y: 0.6)
-				}) { (success) in
-					focusView.removeFromSuperview()
-				}
-			}
+			self.focusView(focusPoint: focusPoint)
 		}
 	}
 	
@@ -428,16 +487,38 @@ public struct CameraView: UIViewRepresentable {
 			return true
 		}
 	}
+	
+	private func focusView(focusPoint: CGPoint) {
+		guard let focusImage = self.cvm.focusImage else {
+			return
+		}
+		let image = UIImage(named: focusImage)
+		let focusView = UIImageView(image: image)
+		focusView.center = focusPoint
+		focusView.alpha = 0.0
+		self.view.addSubview(focusView)
+		UIView.animate(withDuration: 0.25, delay: 0.0, options: .curveEaseInOut, animations: {
+			focusView.alpha = 1.0
+			focusView.transform = CGAffineTransform(scaleX: 1.25, y: 1.25)
+		}) { (success) in
+			UIView.animate(withDuration: 0.15, delay: 0.5, options: .curveEaseInOut, animations: {
+				focusView.alpha = 0.0
+				focusView.transform = CGAffineTransform(translationX: 0.6, y: 0.6)
+			}) { (success) in
+				focusView.removeFromSuperview()
+			}
+		}
+	}
 }
 
 struct RecordButton: UIViewRepresentable {
 	@EnvironmentObject var cvm: CameraViewModel
-	@Binding var timerCount: CGFloat
-	@Binding var isPressing: Bool
-	
+	@State private var plusImageLayer: CALayer = CALayer()
+	@Binding var isMultiCaptureEnabled: Bool
 	private let view: UIView = UIView(frame: CGRect(x: 0, y: 0, width: 100, height: 100))
 	private let innerCircle: CAShapeLayer = CAShapeLayer()
 	private let innerCircleFrame: CGRect = CGRect(x: 0, y: 0, width: 70, height: 70)
+	private let plusImageView = UIImageView(image: UIImage(systemName: "plus", withConfiguration: UIImage.SymbolConfiguration(font: UIFont.systemFont(ofSize: 38))))
 	
 	func makeCoordinator() -> Coordinator {
 		return Coordinator(parent: self)
@@ -446,39 +527,62 @@ struct RecordButton: UIViewRepresentable {
 	func makeUIView(context: UIViewRepresentableContext<RecordButton>) -> UIView {
 		let tapGesture: UITapGestureRecognizer = UITapGestureRecognizer(target: context.coordinator, action: #selector(context.coordinator.tapGesture(_:)))
 		tapGesture.delegate = context.coordinator
+		tapGesture.numberOfTapsRequired = 1
+		self.view.addGestureRecognizer(tapGesture)
 		let longPressGesture: UILongPressGestureRecognizer = UILongPressGestureRecognizer(target: context.coordinator, action: #selector(context.coordinator.longPress(_:)))
 		longPressGesture.delegate = context.coordinator
+		self.view.addGestureRecognizer(longPressGesture)
 		let dragPanGesture = UIPanGestureRecognizer(target: context.coordinator, action: #selector(context.coordinator.zoomDragGesture(_:)))
 		dragPanGesture.delegate = context.coordinator
-		view.gestureRecognizers = [tapGesture, longPressGesture, dragPanGesture]
-		return view
+		self.view.addGestureRecognizer(dragPanGesture)
+		
+		plusImageView.tintColor = .clear
+		plusImageView.layer.position = CGPoint(x: self.view.frame.midX, y: self.view.frame.midY)
+		DispatchQueue.main.async {
+			self.plusImageLayer = plusImageView.layer
+		}
+		self.view.layer.addSublayer(self.plusImageLayer)
+		
+		innerCircle.backgroundColor = UIColor.white.cgColor
+		innerCircle.opacity = 0.0
+		innerCircle.frame = self.innerCircleFrame
+		innerCircle.position = CGPoint(x: self.view.frame.midX, y: self.view.frame.midY)
+		innerCircle.cornerRadius = self.innerCircleFrame.height/2
+		self.view.layer.addSublayer(innerCircle)
+		
+		return self.view
 	}
 	
 	func updateUIView(_ uiView: UIView, context: UIViewRepresentableContext<RecordButton>) {
-		if self.timerCount == 0.0 {
-			innerCircle.backgroundColor = UIColor.white.cgColor
-			innerCircle.opacity = 0.2
-			innerCircle.frame = self.innerCircleFrame
-			innerCircle.position = CGPoint(x: view.frame.midX, y: view.frame.midY)
-			innerCircle.cornerRadius = self.innerCircleFrame.height/2
-			view.layer.addSublayer(innerCircle)
+		plusImageView.tintColor = self.isMultiCaptureEnabled ? .white : .clear
+		plusImageView.layer.position = CGPoint(x: uiView.frame.midX, y: uiView.frame.midY)
+		uiView.layer.replaceSublayer(self.plusImageLayer, with: plusImageView.layer)
+		DispatchQueue.main.async {
+			self.plusImageLayer = plusImageView.layer
 		}
-	}
-	
-	private func recordTimer() -> Timer {
-		return Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { timer in
-			DispatchQueue.main.async {
-				self.timerCount += 0.1
-				if self.timerCount == 10.0 {
-					timer.invalidate()
-					self.cvm.endMovieRecording()
-				}
-			}
-		}
+		
+		innerCircle.backgroundColor = UIColor.white.cgColor
+		innerCircle.opacity = 0.2
+		innerCircle.frame = self.innerCircleFrame
+		innerCircle.position = CGPoint(x: uiView.frame.midX, y: uiView.frame.midY)
+		innerCircle.cornerRadius = self.innerCircleFrame.height/2
+		uiView.layer.replaceSublayer(innerCircle, with: innerCircle)
 	}
 	
 	class Coordinator: NSObject, UIGestureRecognizerDelegate {
 		public var parent: RecordButton
+		private lazy var recordTimer: Timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { timer in
+			DispatchQueue.main.async {
+				self.parent.cvm.recordTimerCount += 0.1
+				if self.parent.cvm.recordTimerCount >= 9.9 {
+					DispatchQueue.main.async {
+						timer.invalidate()
+						self.parent.cvm.endMovieRecording()
+					}
+				}
+			}
+		}
+		
 		init(parent: RecordButton) {
 			self.parent = parent
 		}
@@ -490,26 +594,49 @@ struct RecordButton: UIViewRepresentable {
 		}
 		
 		@objc func tapGesture(_ sender: UITapGestureRecognizer) {
-			sender.numberOfTapsRequired = 1
-			sender.numberOfTouchesRequired = 1
-			self.parent.isPressing.toggle()
-			self.parent.cvm.takePhoto()
+			switch sender.state {
+				case .cancelled, .failed, .began, .changed, .possible:
+					break
+				case .ended:
+					if !self.parent.cvm.isCapturingVideo {
+						DispatchQueue.main.async {
+							self.parent.cvm.takePhoto()
+						}
+					}
+				default:
+					break
+			}
 		}
 		
 		@objc func longPress(_ sender: UILongPressGestureRecognizer) {
 			switch sender.state {
+				case .possible:
+					break
 				case .began:
-					self.parent.cvm.startMovieRecording()
-					self.parent.recordTimer().fire()
+					DispatchQueue.main.async {
+						self.recordTimer.fire()
+						self.parent.cvm.startMovieRecording()
+					}
 				case .cancelled, .ended, .failed:
-					self.parent.cvm.endMovieRecording()
-					self.parent.recordTimer().invalidate()
+					DispatchQueue.main.async {
+						if self.parent.cvm.movieFileOutput.isRecording {
+							self.recordTimer.invalidate()
+							self.parent.cvm.endMovieRecording()
+						} else {
+							self.parent.cvm.endMovieRecording()
+							self.recordTimer.invalidate()
+							self.parent.cvm.recordTimerCount = 0.0
+						}
+					}
 				default:
 					break
 			}
 		}
 		
 		func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+			if gestureRecognizer is UILongPressGestureRecognizer {
+				return false
+			}
 			return true
 		}
 	}

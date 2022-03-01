@@ -18,8 +18,7 @@ class CameraViewModel: NSObject, ObservableObject {
 	@Published var didFinishTakingContent: Bool = false
 	@Published var flashMode: AVCaptureDevice.FlashMode = .off
 	@Published var focusImage: String?
-	@Published var frontFlash: Color = Color.clear
-	@Published var isCapturingPhotos: Bool = false
+	@Published var isCapturingPhoto: Bool = false
 	@Published var isCapturingVideo: Bool = false
 	@Published var isMultiCaptureEnabled: Bool = false
 	@Published var movieFileOutput: AVCaptureMovieFileOutput = AVCaptureMovieFileOutput()
@@ -30,24 +29,36 @@ class CameraViewModel: NSObject, ObservableObject {
 	@Published var session = AVCaptureSession()
 	@Published var showCapturedContentReview: Bool = false
 	@Published var tappedFocusPoint: CGPoint? = nil
+	@Published var recordTimerCount: CGFloat = 0.0
 	@Published var videoGravity: AVLayerVideoGravity = .resizeAspect
 	@Published var videoPlayerURL: URL? = nil
 	@Published var videoQuality: AVCaptureSession.Preset = .hd1920x1080
 	@Published var zoomAmount: CGFloat = 1
 	private var audioDeviceInput: AVCaptureDeviceInput!
+	private var preferredRotatedCameraPosition: AVCaptureDevice.Position = .front
+	private var preferredRotatedCameraType: AVCaptureDevice.DeviceType = .builtInTrueDepthCamera
 	private var setupResult: SessionSetupResult = .success
-	private let sessionQueue = DispatchQueue(label: "session queue")
 	private var videoDeviceInput: AVCaptureDeviceInput!
+	private var zoomDragValueHeight: CGFloat = 0
+	private let sessionQueue = DispatchQueue(label: "session queue")
 	private enum SessionSetupResult {
 		case success
 		case notAuthorized
 		case configurationFailed
 	}
 	
-	private var zoomDragValueHeight: CGFloat = 0
-	
-	private var preferredRotatedCameraType: AVCaptureDevice.DeviceType = .builtInTrueDepthCamera
-	private var preferredRotatedCameraPosition: AVCaptureDevice.Position = .front
+	public func goBackToCameraFromReview() {
+		DispatchQueue.main.async {
+			self.checkForCameraPermissions()
+			self.didFinishTakingContent = false
+			self.isMultiCaptureEnabled = false
+			self.multiCapturedImages = []
+			self.capturedImage = nil
+			self.videoPlayerURL = nil
+			self.didFinishSavingContent = false
+			self.showCapturedContentReview = false
+		}
+	}
 	
 	public func checkForCameraPermissions() {
 		switch AVCaptureDevice.authorizationStatus(for: .video) {
@@ -190,16 +201,18 @@ class CameraViewModel: NSObject, ObservableObject {
 					print("Unknown capture position. Defaulting to back, dual-camera.")
 					self.currentDevicePosition = .back
 			}
-			if self.isCapturingVideo {
-				DispatchQueue.main.async {
-					self.movieFileOutput.stopRecording()
-					self.session.stopRunning()
-					self.configureSession()
-					self.startMovieRecording()
-				}
-			} else {
-				DispatchQueue.main.async {
-					self.configureSession()
+			DispatchQueue.main.async {
+				if self.isCapturingVideo {
+					DispatchQueue.main.async {
+						self.movieFileOutput.stopRecording()
+						self.session.stopRunning()
+						self.configureSession()
+						self.startMovieRecording()
+					}
+				} else {
+					DispatchQueue.main.async {
+						self.configureSession()
+					}
 				}
 			}
 		}
@@ -245,7 +258,7 @@ class CameraViewModel: NSObject, ObservableObject {
 				device.focusMode = .continuousAutoFocus
 			}
 			device.exposurePointOfInterest = focusPoint
-			device.exposureMode = .autoExpose
+			device.exposureMode = .continuousAutoExposure
 			device.unlockForConfiguration()
 			DispatchQueue.main.async {
 				self.tappedFocusPoint = focusPoint
@@ -260,6 +273,9 @@ extension CameraViewModel: AVCapturePhotoCaptureDelegate {
 	public func takePhoto() {
 		self.sessionQueue.async {
 			do {
+				DispatchQueue.main.async {
+					self.isCapturingPhoto = true
+				}
 				let captureDevice = self.videoDeviceInput.device
 				try captureDevice.lockForConfiguration()
 				let photoSettings = AVCapturePhotoSettings()
@@ -270,14 +286,6 @@ extension CameraViewModel: AVCapturePhotoCaptureDelegate {
 			} catch {
 				print("Error taking photo: \(error)")
 			}
-		}
-	}
-	
-	public func photoOutput(_ output: AVCapturePhotoOutput, didFinishCaptureFor resolvedSettings: AVCaptureResolvedPhotoSettings, error: Error?) {
-		if let error = error {
-			print(error)
-		} else if self.isMultiCaptureEnabled {
-			self.isCapturingPhotos = false
 		}
 	}
 	
@@ -304,9 +312,10 @@ extension CameraViewModel: AVCapturePhotoCaptureDelegate {
 						self.capturedImage = image
 						self.didFinishTakingContent = true
 						self.showCapturedContentReview = true
-						self.isCapturingPhotos = false
+						self.isCapturingPhoto = false
 						self.videoDeviceInput.device.videoZoomFactor = 1
 					}
+					self.isCapturingPhoto = false
 				}
 			}
 		}
@@ -349,7 +358,9 @@ extension CameraViewModel: AVCaptureFileOutputRecordingDelegate {
 				let outputFilePath = (NSTemporaryDirectory() as NSString).appendingPathComponent((outputFileName as NSString).appendingPathExtension("mov")!)
 				self.movieFileOutput.startRecording(to: URL(fileURLWithPath: outputFilePath), recordingDelegate: self)
 				DispatchQueue.main.async {
-					self.isCapturingVideo = true
+					if self.recordTimerCount == 0.0 {
+						self.isCapturingVideo = true
+					}
 				}
 			} catch {
 				print("Error starting movie recording: \(error)")
@@ -358,6 +369,11 @@ extension CameraViewModel: AVCaptureFileOutputRecordingDelegate {
 	}
 	
 	public func endMovieRecording() {
+		DispatchQueue.main.async {
+			self.didFinishTakingContent = true
+			self.isCapturingVideo = false
+			self.zoomDragValueHeight = 0
+		}
 		self.sessionQueue.async {
 			do {
 				self.movieFileOutput.stopRecording()
@@ -368,22 +384,7 @@ extension CameraViewModel: AVCaptureFileOutputRecordingDelegate {
 				self.videoDeviceInput.device.videoZoomFactor = 1
 				self.videoDeviceInput.device.unlockForConfiguration()
 			} catch {
-				print(error)
-			}
-		}
-		DispatchQueue.main.async {
-			self.didFinishTakingContent = true
-			self.isCapturingVideo = false
-			self.zoomDragValueHeight = 0
-		}
-	}
-	
-	public func fileOutput(_ output: AVCaptureFileOutput, didStartRecordingTo fileURL: URL, from connections: [AVCaptureConnection]) {
-		DispatchQueue.main.async {
-			if self.movieFileOutput.isRecording && self.currentDevicePosition == .front && self.flashMode == .on {
-				self.frontFlash = Color.white
-			} else {
-				self.frontFlash = Color.clear
+				print("Error ending movie recording: \(error)")
 			}
 		}
 	}
@@ -454,7 +455,6 @@ extension CameraViewModel: AVCaptureFileOutputRecordingDelegate {
 	public func fileOutput(_ output: AVCaptureFileOutput, didFinishRecordingTo outputFileURL: URL, from connections: [AVCaptureConnection], error: Error?) {
 		let outputURL: URL = outputFileURL
 		self.capturedMovieURLs.append(outputURL)
-		
 		if !self.isCapturingVideo {
 			if self.capturedMovieURLs.count > 1 {
 				self.mergeCapturedVideos { completedMovieURL in
@@ -469,7 +469,6 @@ extension CameraViewModel: AVCaptureFileOutputRecordingDelegate {
 			}
 			DispatchQueue.main.async {
 				self.capturedMovieURLs = []
-				self.frontFlash = Color.clear
 				self.showCapturedContentReview = true
 			}
 		}
