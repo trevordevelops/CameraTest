@@ -30,9 +30,10 @@ class CameraViewModel: NSObject, ObservableObject {
 	@Published var showCapturedContentReview: Bool = false
 	@Published var tappedFocusPoint: CGPoint? = nil
 	@Published var recordTimerCount: CGFloat = 0.0
-	@Published var videoGravity: AVLayerVideoGravity = .resizeAspect
+	@Published var videoGravity: AVLayerVideoGravity = .resizeAspectFill
 	@Published var videoPlayerURL: URL? = nil
-	@Published var videoQuality: AVCaptureSession.Preset = .hd1920x1080
+	@Published var backCamVideoQuality: AVCaptureSession.Preset = .photo
+	@Published var frontCamVideoQuality: AVCaptureSession.Preset = .high
 	@Published var zoomAmount: CGFloat = 1
 	private var audioDeviceInput: AVCaptureDeviceInput!
 	private var preferredRotatedCameraPosition: AVCaptureDevice.Position = .front
@@ -86,7 +87,11 @@ class CameraViewModel: NSObject, ObservableObject {
 		}
 		self.removeSessionInOutPuts()
 		self.session.beginConfiguration()
-		self.session.sessionPreset = self.videoQuality
+		if self.currentDevicePosition == .back {
+			self.session.sessionPreset = self.backCamVideoQuality
+		} else {
+			self.session.sessionPreset = self.frontCamVideoQuality
+		}
 		do {
 			var defaultVideoDevice: AVCaptureDevice?
 			if self.currentDevicePosition == .front {
@@ -117,6 +122,10 @@ class CameraViewModel: NSObject, ObservableObject {
 				if self.videoDeviceInput.device.isFocusPointOfInterestSupported {
 					self.videoDeviceInput.device.focusMode = .continuousAutoFocus
 				}
+				if self.videoDeviceInput.device.isLowLightBoostSupported {
+					self.videoDeviceInput.device.automaticallyEnablesLowLightBoostWhenAvailable = true
+				}
+				self.videoDeviceInput.device.automaticallyAdjustsVideoHDREnabled = true
 			} else {
 				print("Couldn't add video device input to the self.ue.session.")
 				setupResult = .configurationFailed
@@ -228,13 +237,12 @@ class CameraViewModel: NSObject, ObservableObject {
 				var rawZoomFactor: CGFloat = 0
 				if !self.movieFileOutput.isRecording {
 					self.zoomDragValueHeight = value
-					rawZoomFactor = (self.zoomDragValueHeight/UIScreen.main.bounds.height) * maxZoomFactor
+					rawZoomFactor = ((self.zoomDragValueHeight/UIScreen.main.bounds.height) * maxZoomFactor) / 4
 				} else if self.zoomDragValueHeight != 0 && self.movieFileOutput.isRecording {
-					rawZoomFactor = ((self.zoomDragValueHeight+value)/UIScreen.main.bounds.height) * maxZoomFactor
+					rawZoomFactor = (((self.zoomDragValueHeight+value)/UIScreen.main.bounds.height) * maxZoomFactor) / 4
 				} else {
-					rawZoomFactor = (value/UIScreen.main.bounds.height) * maxZoomFactor
+					rawZoomFactor = ((value/UIScreen.main.bounds.height) * maxZoomFactor) / 4
 				}
-				
 				let zoomFactor = min(max(rawZoomFactor, 1), maxZoomFactor)
 				captureDevice.videoZoomFactor = zoomFactor
 				if captureDevice.videoZoomFactor == 1 {
@@ -290,35 +298,64 @@ extension CameraViewModel: AVCapturePhotoCaptureDelegate {
 	}
 	
 	public func photoOutput(_ output: AVCapturePhotoOutput, didFinishProcessingPhoto photo: AVCapturePhoto, error: Error?) {
-		guard error == nil else { print("Error capturing photo: \(error!)"); return }
+		guard error == nil else {
+			print("Error capturing photo: \(error!)")
+			return
+		}
 
 		if let photoData = photo.fileDataRepresentation() {
-			let dataProvider = CGDataProvider(data: photoData as CFData)
-			if let cgImageRef = CGImage(jpegDataProviderSource: dataProvider!, decode: nil, shouldInterpolate: true, intent: CGColorRenderingIntent.defaultIntent) {
-				DispatchQueue.main.async {
-					var image: UIImage
-					if self.currentDevicePosition == .front {
-						image = UIImage(cgImage: cgImageRef, scale: 1.0, orientation: .leftMirrored)
-					} else {
-						image = UIImage(cgImage: cgImageRef, scale: 1.0, orientation: .right)
-					}
-					if self.isMultiCaptureEnabled {
-						self.multiCapturedImages.append(image)
-						if self.multiCapturedImages.count == 10 {
-							self.didFinishTakingContent = true
-							self.showCapturedContentReview = true
+			if let dataProvider: CGDataProvider = CGDataProvider(data: photoData as CFData) {
+				if let cgImageRef: CGImage = CGImage(jpegDataProviderSource: dataProvider, decode: nil, shouldInterpolate: true, intent: .defaultIntent) {
+					DispatchQueue.main.async {
+						if self.backCamVideoQuality == .photo && self.currentDevicePosition == .back {
+							self.cropImage(image: cgImageRef) { croppedImage in
+								self.sendImagesToReview(image: croppedImage)
+							}
+						} else {
+							var uiImage: UIImage = UIImage()
+							if self.currentDevicePosition == .front {
+								uiImage = UIImage(cgImage: cgImageRef, scale: 1.0, orientation: .leftMirrored)
+							} else {
+								uiImage = UIImage(cgImage: cgImageRef, scale: 1.0, orientation: .right)
+							}
+							self.sendImagesToReview(image: uiImage)
 						}
-					} else {
-						self.capturedImage = image
-						self.didFinishTakingContent = true
-						self.showCapturedContentReview = true
-						self.isCapturingPhoto = false
-						self.videoDeviceInput.device.videoZoomFactor = 1
 					}
-					self.isCapturingPhoto = false
 				}
 			}
 		}
+	}
+	
+	private func cropImage(image: CGImage, completion: @escaping (_ croppedImage: UIImage) -> Void) {
+		let aspectRatio: CGFloat = 1920 / 1080
+		let cropRectY: CGFloat = ((1920 - 1080) / aspectRatio) - 100
+		let cropRect = CGRect(x: 0, y: cropRectY, width: CGFloat(image.width), height: CGFloat(image.width) / aspectRatio)
+		if let croppedImage: CGImage = image.cropping(to: cropRect) {
+			var uiImage: UIImage = UIImage()
+			if self.currentDevicePosition == .front {
+				uiImage = UIImage(cgImage: croppedImage, scale: 1.0, orientation: .leftMirrored)
+			} else {
+				uiImage = UIImage(cgImage: croppedImage, scale: 1.0, orientation: .right)
+			}
+			completion(uiImage)
+		}
+	}
+	
+	private func sendImagesToReview(image: UIImage) {
+		if self.isMultiCaptureEnabled {
+			self.multiCapturedImages.append(image)
+			if self.multiCapturedImages.count == 10 {
+				self.didFinishTakingContent = true
+				self.showCapturedContentReview = true
+			}
+		} else {
+			self.capturedImage = image
+			self.didFinishTakingContent = true
+			self.showCapturedContentReview = true
+			self.isCapturingPhoto = false
+			self.videoDeviceInput.device.videoZoomFactor = 1
+		}
+		self.isCapturingPhoto = false
 	}
 	
 	public func savePhoto(_ image: UIImage) {
@@ -358,7 +395,7 @@ extension CameraViewModel: AVCaptureFileOutputRecordingDelegate {
 				let outputFilePath = (NSTemporaryDirectory() as NSString).appendingPathComponent((outputFileName as NSString).appendingPathExtension("mov")!)
 				self.movieFileOutput.startRecording(to: URL(fileURLWithPath: outputFilePath), recordingDelegate: self)
 				DispatchQueue.main.async {
-					if self.recordTimerCount == 0.0 {
+					if self.recordTimerCount <= 1.0 {
 						self.isCapturingVideo = true
 					}
 				}
@@ -388,6 +425,89 @@ extension CameraViewModel: AVCaptureFileOutputRecordingDelegate {
 			}
 		}
 	}
+	
+//	private func cropVideo( _ outputFileUrl: URL, completion: @escaping (_ newUrl: URL) -> Void) {
+//		// Get input clip
+////		let videoAsset: AVAsset = AVAsset(url: outputFileUrl)
+////		let clipVideoTrack = videoAsset.tracks(withMediaType: .video).first! as AVAssetTrack
+////
+////		// Make video to square
+////		let aspectRatio: CGFloat = 1920 / 1080
+////		let videoComposition = AVMutableVideoComposition()
+////		videoComposition.renderSize = CGSize(width: clipVideoTrack.naturalSize.width, height: clipVideoTrack.naturalSize.width / aspectRatio)
+////		videoComposition.frameDuration = CMTimeMake(value: 1, timescale: 30)
+////
+////		// Rotate to portrait
+//////		let transformer = AVMutableVideoCompositionLayerInstruction( assetTrack: clipVideoTrack)
+//////		let transform1 = CGAffineTransform(translationX: clipVideoTrack.naturalSize.height, y: -(clipVideoTrack.naturalSize.width - clipVideoTrack.naturalSize.height ) / 2 )
+//////		let transform2 = transform1.rotated(by: CGFloat(.pi / 2))
+//////		transformer.setTransform( transform2, at: kCMTimeZero)
+////
+//////		let mainInstruction: AVMutableVideoCompositionInstruction = AVMutableVideoCompositionInstruction()
+//////		mainInstruction.timeRange = CMTimeRange(start: .zero, duration: videoAsset.duration)
+//////		instruction.layerInstructions = [mainInstruction]
+//////		videoComposition.instructions = [instruction]
+////
+////		// Export
+////		let documentDirectory = NSSearchPathForDirectoriesInDomains(.documentDirectory, .userDomainMask, true)[0]
+////		let dateFormatter = DateFormatter()
+////		dateFormatter.dateStyle = .long
+////		dateFormatter.timeStyle = .long
+////		let date = dateFormatter.string(from: NSDate() as Date)
+////		let savePath = (documentDirectory as NSString).appendingPathComponent("eventSocial-\(date).mp4")
+////		let url = NSURL(fileURLWithPath: savePath)
+////		if let exporter = AVAssetExportSession(asset: videoAsset, presetName: AVAssetExportPreset1920x1080) {
+////			exporter.videoComposition = videoComposition
+////			exporter.outputURL = url as URL
+////			exporter.outputFileType = .mp4
+////			exporter.exportAsynchronously {
+////				DispatchQueue.main.async {
+////					if let url = exporter.outputURL {
+////						completion(url)
+////					}
+////				}
+////			}
+////		}
+//		let item = AVPlayerItem(url: outputFileUrl)
+//
+//		let aspectRatio: CGFloat = 1920 / 1080
+//		let cropRectY: CGFloat = ((1920 - 1080) / aspectRatio) - 100
+//		let cropRect = CGRect(x: 0, y: cropRectY, width: CGFloat(item.presentationSize.width), height: CGFloat(item.presentationSize.width) / aspectRatio)
+//
+//		let cropScaleComposition = AVMutableVideoComposition(asset: item.asset, applyingCIFiltersWithHandler: { request in
+//			let cropFilter = CIFilter(name: "CICrop")! //1
+//			cropFilter.setValue(request.sourceImage, forKey: kCIInputImageKey) //2
+//			cropFilter.setValue(CIVector(cgRect: cropRect), forKey: "inputRectangle")
+//
+//			let imageAtOrigin = cropFilter.outputImage!.transformed(by: CGAffineTransform(translationX: -cropRect.origin.x, y: -cropRect.origin.y)) //3
+//			request.finish(with: imageAtOrigin, context: nil) //4
+//		})
+//
+//		cropScaleComposition.renderSize = cropRect.size //5
+//		item.videoComposition = cropScaleComposition  //6
+//
+//		let documentDirectory = NSSearchPathForDirectoriesInDomains(.documentDirectory, .userDomainMask, true)[0]
+//		let dateFormatter = DateFormatter()
+//		dateFormatter.dateStyle = .long
+//		dateFormatter.timeStyle = .long
+//		let date = dateFormatter.string(from: NSDate() as Date)
+//		let savePath = (documentDirectory as NSString).appendingPathComponent("eventSocial-\(date).mp4")
+//		let url = NSURL(fileURLWithPath: savePath)
+//
+//		if let exporter = AVAssetExportSession(asset: item, presetName: AVAssetExportPreset1920x1080) {
+//			exporter.outputURL = url as URL
+//			exporter.outputFileType = .mp4
+//			exporter.shouldOptimizeForNetworkUse = true
+//			exporter.videoComposition = mainComposition
+//			exporter.exportAsynchronously {
+//				if let url = exporter.outputURL {
+//					completion(url)
+//				} else if let error = exporter.error {
+//					print("Merge exporter error: \(error)")
+//				}
+//			}
+//		}
+//	}
 	
 	public func mergeCapturedVideos(completion: @escaping (_ completedMovieURL: URL) -> Void) {
 		let mixComposition = AVMutableComposition()
@@ -453,8 +573,14 @@ extension CameraViewModel: AVCaptureFileOutputRecordingDelegate {
 	
 	/// - Tag: DidFinishRecording
 	public func fileOutput(_ output: AVCaptureFileOutput, didFinishRecordingTo outputFileURL: URL, from connections: [AVCaptureConnection], error: Error?) {
-		let outputURL: URL = outputFileURL
-		self.capturedMovieURLs.append(outputURL)
+//		if self.currentDevicePosition == .back {
+//			self.cropVideo(outputFileURL) { newUrl in
+//				self.capturedMovieURLs.append(newUrl)
+//				print("DS")
+//			}
+//		} else {
+			self.capturedMovieURLs.append(outputFileURL)
+//		}
 		if !self.isCapturingVideo {
 			if self.capturedMovieURLs.count > 1 {
 				self.mergeCapturedVideos { completedMovieURL in
@@ -464,7 +590,7 @@ extension CameraViewModel: AVCaptureFileOutputRecordingDelegate {
 				}
 			} else {
 				DispatchQueue.main.async {
-					self.videoPlayerURL = outputURL
+					self.videoPlayerURL = outputFileURL
 				}
 			}
 			DispatchQueue.main.async {

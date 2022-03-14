@@ -12,7 +12,7 @@ struct CameraTestApp: App {
 	let uv = CameraViewModel()
     var body: some Scene {
         WindowGroup {
-            ContentView()
+			CameraView()
 				.environmentObject(uv)
         }
     }
